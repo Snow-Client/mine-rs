@@ -1,6 +1,8 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 //TODO: Add documentation and fix naming
 
+use std::path::PathBuf;
+
 use {
     async_fs as fs,
     async_trait::async_trait,
@@ -58,8 +60,6 @@ impl HttpClient for reqwest::Client {
         Ok(http_resp)
     }
 }
-
-const CACHE_FILE_NAME: &str = "auth.cache";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -404,7 +404,7 @@ pub struct MsAuthError {
 pub struct DeviceCode {
     pub inner: Option<DeviceCodeInner>,
     cid: String,
-    cache: String,
+    cache: PathBuf
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,13 +423,10 @@ impl DeviceCode {
     /// Only show the user code and the link when cached is false because they'll be empty if not.
     pub async fn new(
         cid: &str,
-        cache_file: Option<&str>,
+        cache_file: impl AsRef<Path>,
         client: &impl HttpClient,
     ) -> Result<Self, Error> {
-        let (path, name) = match cache_file {
-            Some(file) => (Path::new(file), file),
-            None => (Path::new(CACHE_FILE_NAME), CACHE_FILE_NAME),
-        };
+        let path = cache_file.as_ref();
 
         let device_code_inner: Option<DeviceCodeInner>;
         if !path.is_file() {
@@ -468,7 +465,7 @@ impl DeviceCode {
         let device_code = DeviceCode {
             inner: device_code_inner,
             cid: String::from(cid),
-            cache: String::from(name),
+            cache: path.to_path_buf(),
         };
         Ok(device_code)
     }
@@ -538,7 +535,7 @@ impl DeviceCode {
     /// Call this method after creating the device code and having shown the user the code (but only if DeviceCode.cached is false)
     /// It might block for a while if the access token hasn't been cached yet.
     pub async fn authenticate(&self, client: &impl HttpClient) -> Result<Auth, Error> {
-        let path: &Path = Path::new(&self.cache);
+        let path = self.cache.as_path();
         let msa = match self.inner {
             Some(_) => {
                 // SAFETY: Because we know self.inner is Some, we can be certain self.auth_ms() won't return None.
@@ -561,8 +558,7 @@ impl DeviceCode {
             .await?
             .auth_mc(client)
             .await?;
-
-        dbg!("hi");
+        
         let profile = mca.mc_profile(client).await?;
 
         let auth = Auth {
