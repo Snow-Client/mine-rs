@@ -138,6 +138,7 @@ impl McAuth {
         let pr_resp = client
             .execute_request(
                 http::request::Builder::new()
+                    .uri("https://api.minecraftservices.com/minecraft/profile")
                     .header("Authorization", format!("Bearer {}", self.access_token))
                     .body(Vec::new())?,
             )
