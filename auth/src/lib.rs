@@ -4,14 +4,13 @@
 use std::path::PathBuf;
 
 use {
-    async_fs as fs,
     async_trait::async_trait,
     futures_io::{AsyncRead, AsyncWrite},
     futures_util::{AsyncReadExt, AsyncWriteExt},
     http::StatusCode,
     serde_derive::{Deserialize, Serialize},
     serde_json::json,
-    std::{fmt::Display, path::Path, string::FromUtf8Error},
+    std::{fmt::Display, string::FromUtf8Error},
 };
 
 trait ResponseExt: Sized {
@@ -112,11 +111,12 @@ async fn write_string_to<W: AsyncWrite + Unpin>(w: &mut W, s: &String) -> std::i
     Ok(())
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Auth {
     pub name: String,
     pub uuid: String,
     pub token: String,
+    pub ms_auth: MsAuth,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -262,7 +262,7 @@ struct MsAuthRefresh {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct MsAuth {
+pub struct MsAuth {
     expires_in: i64,
     access_token: String,
     refresh_token: String,
@@ -401,11 +401,11 @@ pub struct MsAuthError {
     pub error_uri: String,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone)]
 pub struct DeviceCode {
     pub inner: Option<DeviceCodeInner>,
     cid: String,
-    cache: PathBuf
+    ms_auth: Option<MsAuth>
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -424,49 +424,40 @@ impl DeviceCode {
     /// Only show the user code and the link when cached is false because they'll be empty if not.
     pub async fn new(
         cid: &str,
-        cache_file: impl AsRef<Path>,
+        ms_auth: Option<MsAuth>,
         client: &impl HttpClient,
     ) -> Result<Self, Error> {
-        let path = cache_file.as_ref();
-
         let device_code_inner: Option<DeviceCodeInner>;
-        if !path.is_file() {
-            let device_resp = client.execute_request(
-                http::request::Builder::new()
-                    .uri(
-                        format!(
-                            "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode?client_id={cid}&scope={}",
-                            "XboxLive.signin%20offline_access"
-                        )
-                    )
-                    .header("content-length", "0")
-                    .header("content-type", "application/x-www-form-urlencoded")
-                    .body(Vec::new())?
-                )
-                .await?
-                .error_for_status()?
-                .into_body();
 
-            //let device_resp = client
-            //    .get("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
-            //    .query(&[
-            //        ("client_id", cid),
-            //        ("scope", "XboxLive.signin offline_access"),
-            //    ])
-            //    .header("content-length", "0")
-            //    .send()
-            //    .await?
-            //    .error_for_status()?
-            //    .bytes()
-            //    .await?;
-            device_code_inner = Some(serde_json::from_slice(device_resp.as_ref())?);
-        } else {
-            device_code_inner = None;
+        match ms_auth {
+            None => {
+                let device_resp = client.execute_request(
+                    http::request::Builder::new()
+                        .uri(
+                            format!(
+                                "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode?client_id={cid}&scope={}",
+                                "XboxLive.signin%20offline_access"
+                            )
+                        )
+                        .header("content-length", "0")
+                        .header("content-type", "application/x-www-form-urlencoded")
+                        .body(Vec::new())?
+                    )
+                    .await?
+                    .error_for_status()?
+                    .into_body();
+
+                device_code_inner = Some(serde_json::from_slice(device_resp.as_ref())?);
+            }
+            Some(_) => {
+                device_code_inner = None;
+            }
         }
+
         let device_code = DeviceCode {
             inner: device_code_inner,
             cid: String::from(cid),
-            cache: path.to_path_buf(),
+            ms_auth
         };
         Ok(device_code)
     }
@@ -536,22 +527,16 @@ impl DeviceCode {
     /// Call this method after creating the device code and having shown the user the code (but only if DeviceCode.cached is false)
     /// It might block for a while if the access token hasn't been cached yet.
     pub async fn authenticate(&self, client: &impl HttpClient) -> Result<Auth, Error> {
-        let path = self.cache.as_path();
-        let msa = match self.inner {
-            Some(_) => {
-                // SAFETY: Because we know self.inner is Some, we can be certain self.auth_ms() won't return None.
-                let msa = unsafe { self.auth_ms(client).await?.unwrap_unchecked() };
-                msa.write_to(&mut fs::File::create(path).await?).await?;
-                msa
+        let msa = match self.ms_auth.clone() {
+            Some(mut ms_auth) => {
+                ms_auth.refresh(&self.cid, client).await?;
+                ms_auth
             }
             None => {
-                let mut msa: MsAuth = MsAuth::read_from(&mut fs::File::open(path).await?).await?;
-                if msa.refresh(&self.cid, client).await? {
-                    msa.write_to(&mut fs::File::create(path).await?).await?;
-                }
-                msa
+                unsafe { self.auth_ms(client).await?.unwrap_unchecked() }
             }
         };
+        
         let mca = msa
             .auth_xbl(client)
             .await?
@@ -566,6 +551,7 @@ impl DeviceCode {
             name: profile.name,
             uuid: profile.id,
             token: mca.access_token,
+            ms_auth: msa
         };
         Ok(auth)
     }
