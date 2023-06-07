@@ -1,12 +1,8 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 //TODO: Add documentation and fix naming
 
-use std::path::PathBuf;
-
 use {
     async_trait::async_trait,
-    futures_io::{AsyncRead, AsyncWrite},
-    futures_util::{AsyncReadExt, AsyncWriteExt},
     http::StatusCode,
     serde_derive::{Deserialize, Serialize},
     serde_json::json,
@@ -95,22 +91,6 @@ impl From<StatusCode> for HttpStatusError {
     }
 }
 
-async fn read_string_from<R: AsyncRead + Unpin>(r: &mut R) -> Result<String, Error> {
-    let mut bytes = [0u8; 2];
-    r.read_exact(&mut bytes).await?;
-    let len = u16::from_le_bytes(bytes);
-    let mut buf = vec![0; len as usize];
-    r.read_exact(&mut buf).await?;
-    Ok(String::from_utf8(buf)?)
-}
-
-async fn write_string_to<W: AsyncWrite + Unpin>(w: &mut W, s: &String) -> std::io::Result<()> {
-    let len = (s.len() as u16).to_le_bytes();
-    w.write_all(&len).await?;
-    w.write_all(s.as_bytes()).await?;
-    Ok(())
-}
-
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct Auth {
     pub name: String,
@@ -145,15 +125,6 @@ impl McAuth {
             .await?
             .error_for_status()?
             .into_body();
-
-        //let pr_resp = client
-        //    .get("https://api.minecraftservices.com/minecraft/profile")
-        //    .header("Authorization", format!("Bearer {}", self.access_token))
-        //    .send()
-        //    .await?
-        //    .error_for_status()?
-        //    .bytes()
-        //    .await?;
 
         let mc_profile = serde_json::from_slice(pr_resp.as_ref())?;
         Ok(mc_profile)
@@ -195,16 +166,6 @@ impl XstsAuth {
             .error_for_status()?
             .into_body();
 
-        //let mc_resp = client
-        //    .post("https://api.minecraftservices.com/authentication/login_with_xbox")
-        //    .header("Accept", "application/json")
-        //    .json(&json)
-        //    .send()
-        //    .await?
-        //    .error_for_status()?
-        //    .bytes()
-        //    .await?;
-
         let mc_auth: McAuth = serde_json::from_slice(mc_resp.as_ref())?;
         //mc_auth.expires_after = mc_auth.expires_in + chrono::Utc::now().timestamp();
         Ok(mc_auth)
@@ -213,7 +174,7 @@ impl XstsAuth {
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
-struct XblAuth {
+pub struct XblAuth {
     token: String,
 }
 
@@ -237,16 +198,6 @@ impl XblAuth {
             )
             .await?
             .into_body();
-
-        //let xsts_resp = client
-        //    .post("https://xsts.auth.xboxlive.com/xsts/authorize")
-        //    .header("Content-Type", "application/json")
-        //    .json(&json)
-        //    .send()
-        //    .await?
-        //    .error_for_status()?
-        //    .bytes()
-        //    .await?;
 
         let xsts_auth: XstsAuth = serde_json::from_slice(xsts_resp.as_ref())?;
 
@@ -289,22 +240,7 @@ impl MsAuth {
                 .header("content-type", "application/x-www-form-urlencoded")
                 .body(Vec::new())?
             ).await?.into_body();
-            //let resp = client
-            //    .post("https://login.live.com/oauth20_token.srf")
-            //    .form(&[
-            //        ("client_id", cid),
-            //        ("refresh_token", &self.refresh_token),
-            //        ("grant_type", "refresh_token"),
-            //        (
-            //            "redirect_uri",
-            //            "https://login.microsoftonline.com/common/oauth2/nativeclient",
-            //        ),
-            //    ])
-            //    .send()
-            //    .await?
-            //    .error_for_status()?
-            //    .bytes()
-            //    .await?;
+
             let refresh: MsAuthRefresh = serde_json::from_slice(resp.as_ref())?;
             self.access_token = refresh.access_token;
             self.refresh_token = refresh.refresh_token;
@@ -334,51 +270,12 @@ impl MsAuth {
             )
             .await?
             .into_body();
-        //let xbl_resp = client
-        //    .post("https://user.auth.xboxlive.com/user/authenticate")
-        //    .header("Accept", "application/json")
-        //    .json(&json)
-        //    .send()
-        //    .await?
-        //    .error_for_status()?
-        //    .bytes()
-        //    .await?;
+
         let xbl_auth: XblAuth = serde_json::from_slice(xbl_resp.as_ref())?;
         Ok(xbl_auth)
     }
 
-    pub async fn write_to<W: AsyncWrite + Unpin>(&self, w: &mut W) -> std::io::Result<()> {
-        let mut buf = Vec::new();
-        buf.write_all(&self.expires_after.to_le_bytes()).await?;
-        write_string_to(&mut buf, &self.access_token).await?;
-        write_string_to(&mut buf, &self.refresh_token).await?;
-        let len = buf.len();
-        w.write_all(&(len as u16).to_le_bytes()).await?;
-        w.write_all(&buf).await?;
-        Ok(())
-    }
 
-    pub async fn read_from<R: AsyncRead + Unpin>(r: &mut R) -> Result<MsAuth, Error> {
-        let mut bytes = [0u8; 2];
-        r.read_exact(&mut bytes).await?;
-        let len = u16::from_le_bytes(bytes) as usize;
-
-        let mut buf = vec![0; len];
-        r.read_exact(&mut buf).await?;
-        let mut buf = buf.as_slice();
-        let mut bytes = [0u8; 8];
-        buf.read_exact(&mut bytes).await?;
-
-        let expires_after = i64::from_le_bytes(bytes);
-        let access_token = read_string_from(&mut buf).await?;
-        let refresh_token = read_string_from(&mut buf).await?;
-        Ok(MsAuth {
-            expires_in: 0,
-            access_token,
-            refresh_token,
-            expires_after,
-        })
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, thiserror::Error)]
@@ -488,16 +385,7 @@ impl DeviceCode {
                                 .body(body)?,
                         )
                         .await?;
-                    //let code_resp = client
-                    //    .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
-                    //    .form(&[
-                    //        ("client_id", &self.cid as &str),
-                    //        ("scope", "XboxLive.signin offline_access"),
-                    //        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                    //        ("device_code", &inner.device_code),
-                    //    ])
-                    //    .send()
-                    //    .await?;
+
                     match code_resp.status() {
                         StatusCode::BAD_REQUEST => {
                             let ms_auth_error: MsAuthError =
@@ -536,7 +424,7 @@ impl DeviceCode {
                 unsafe { self.auth_ms(client).await?.unwrap_unchecked() }
             }
         };
-        
+
         let mca = msa
             .auth_xbl(client)
             .await?
