@@ -214,11 +214,11 @@ struct MsAuthRefresh {
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MsAuth {
-    expires_in: i64,
-    access_token: String,
-    refresh_token: String,
+    pub expires_in: i64,
+    pub access_token: String,
+    pub refresh_token: String,
     #[serde(skip)]
-    expires_after: i64,
+    pub expires_after: i64,
 }
 
 impl MsAuth {
