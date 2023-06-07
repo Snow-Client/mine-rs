@@ -225,21 +225,19 @@ impl MsAuth {
     /// Checks if the access token is still valid and refreshes it if it isn't.
     pub async fn refresh(&mut self, cid: &str, client: &impl HttpClient) -> Result<bool, Error> {
         if self.expires_after <= chrono::Utc::now().timestamp() {
-            let resp = client.execute_request(
-                http::request::Builder::new()
-                .uri(
-                    format!(
-                        "https://login.live.com/oauth20_token.srf?client_id={}&refresh_token={}&grant_type={}&redirect_uri={}",
-                        cid,
-                        &self.refresh_token,
-                        "refresh_token",
-                        "https://login.microsoftonline.com/common/oauth2/nativeclient"
-                    )
-                )
+            let request = http::request::Builder::new()
+                .uri("https://login.live.com/oauth20_token.srf?")
                 .method(http::Method::POST)
                 .header("content-type", "application/x-www-form-urlencoded")
-                .body(Vec::new())?
-            ).await?.into_body();
+                .body(format!(
+                    "client_id={}&refresh_token={}&grant_type={}&redirect_uri={}",
+                    cid,
+                    &self.refresh_token,
+                    "refresh_token",
+                    "https://login.microsoftonline.com/common/oauth2/nativeclient"
+                ).into_bytes())?;
+            
+            let resp = client.execute_request(request).await?.into_body();
 
             let refresh: MsAuthRefresh = serde_json::from_slice(resp.as_ref())?;
             self.access_token = refresh.access_token;
