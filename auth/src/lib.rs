@@ -319,6 +319,7 @@ impl DeviceCode {
     /// Only show the user code and the link when cached is false because they'll be empty if not.
     pub async fn new(
         cid: &str,
+        tenant_id: &str,
         ms_auth: Option<MsAuth>,
         client: &impl HttpClient,
     ) -> Result<Self, Error> {
@@ -330,7 +331,7 @@ impl DeviceCode {
                     http::request::Builder::new()
                         .uri(
                             format!(
-                                "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode?client_id={cid}&scope={}",
+                                "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode?client_id={cid}&scope={}",
                                 "XboxLive.signin%20offline_access"
                             )
                         )
