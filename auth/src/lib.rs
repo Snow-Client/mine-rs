@@ -300,6 +300,7 @@ pub struct MsAuthError {
 pub struct DeviceCode {
     pub inner: Option<DeviceCodeInner>,
     cid: String,
+    tenant_id: String,
     ms_auth: Option<MsAuth>
 }
 
@@ -379,7 +380,7 @@ impl DeviceCode {
                                 .header("content-type", "application/x-www-form-urlencoded")
                                 .header("content-length", body.len())
                                 .uri(
-                                    "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+                                    "https://login.microsoftonline.com/{&self.tenant_id}/oauth2/v2.0/token",
                                 )
                                 .body(body)?,
                         )
